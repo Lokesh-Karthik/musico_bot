@@ -5,20 +5,38 @@ import { Logger } from '../utils/logger.js';
 
 class YouTubeService {
   constructor() {
-    // Initialize YouTube API if key is provided
+    this.ytdlOptions = {
+      quality: 'highestaudio',
+      filter: 'audioonly',
+      format: 'audioonly',
+      highWaterMark: 1 << 25,
+      requestOptions: {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Accept-Encoding': 'gzip, deflate',
+          'DNT': '1',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+        }
+      }
+    };
+
+    // Initialize YouTube Data API
     if (config.youtube.apiKey) {
       this.youtube = google.youtube({
         version: 'v3',
         auth: config.youtube.apiKey
       });
       this.apiEnabled = true;
-      Logger.info('YouTube Data API initialized');
+      Logger.info('YouTube Data API initialized successfully');
     } else {
       this.apiEnabled = false;
-      Logger.warn('YouTube API key not provided. Search and playlist features disabled.');
+      Logger.warn('YouTube API key not provided. Search and playlist features will be limited.');
     }
 
-    Logger.info('YouTube service initialized with latest ytdl-core');
+    Logger.info('YouTube service initialized with ytdl-core latest and YouTube Data API');
   }
 
   isYouTubePlaylistUrl(url) {
@@ -54,18 +72,21 @@ class YouTubeService {
 
   async searchVideos(query, maxResults = 5) {
     if (!this.apiEnabled) {
-      throw new Error('YouTube API key not configured. Please add YOUTUBE_API_KEY to your .env file.');
+      Logger.warn('YouTube Data API not available for search');
+      throw new Error('Search functionality requires YouTube Data API key');
     }
 
     try {
       Logger.info(`Searching YouTube for: ${query}`);
       
       const response = await this.youtube.search.list({
-        part: 'snippet',
+        part: ['snippet'],
         q: query,
-        type: 'video',
+        type: ['video'],
         maxResults: maxResults,
-        order: 'relevance'
+        order: 'relevance',
+        videoEmbeddable: 'true',
+        videoSyndicated: 'true'
       });
 
       const videos = response.data.items.map(item => ({
@@ -76,29 +97,39 @@ class YouTubeService {
         description: item.snippet.description
       }));
 
-      Logger.info(`Found ${videos.length} videos for query: ${query}`);
+      Logger.info(`Found ${videos.length} search results`);
       return videos;
     } catch (error) {
       Logger.error('YouTube search failed:', error.message);
+      
+      if (error.message.includes('quotaExceeded')) {
+        throw new Error('YouTube API quota exceeded. Please try again later.');
+      }
+      
+      if (error.message.includes('keyInvalid')) {
+        throw new Error('Invalid YouTube API key. Please check your configuration.');
+      }
+      
       throw new Error(`YouTube search failed: ${error.message}`);
     }
   }
 
   async getPlaylistVideos(playlistId) {
     if (!this.apiEnabled) {
-      throw new Error('YouTube API key not configured. Please add YOUTUBE_API_KEY to your .env file.');
+      Logger.warn('YouTube Data API not available for playlists');
+      throw new Error('Playlist functionality requires YouTube Data API key');
     }
 
     try {
       Logger.info(`Fetching YouTube playlist: ${playlistId}`);
       
-      // Get playlist info
+      // Get playlist details
       const playlistResponse = await this.youtube.playlists.list({
-        part: 'snippet',
-        id: playlistId
+        part: ['snippet'],
+        id: [playlistId]
       });
 
-      if (!playlistResponse.data.items.length) {
+      if (!playlistResponse.data.items || playlistResponse.data.items.length === 0) {
         throw new Error('Playlist not found or is private');
       }
 
@@ -108,15 +139,14 @@ class YouTubeService {
 
       do {
         const response = await this.youtube.playlistItems.list({
-          part: 'snippet',
+          part: ['snippet'],
           playlistId: playlistId,
           maxResults: 50,
           pageToken: nextPageToken
         });
 
         const items = response.data.items.filter(item => 
-          item.snippet.title !== 'Private video' && 
-          item.snippet.title !== 'Deleted video'
+          item.snippet.resourceId.kind === 'youtube#video'
         );
 
         videos.push(...items.map(item => ({
@@ -134,11 +164,19 @@ class YouTubeService {
       
       return {
         name: playlistInfo.snippet.title,
-        description: playlistInfo.snippet.description,
         videos: videos
       };
     } catch (error) {
       Logger.error('Failed to fetch YouTube playlist:', error.message);
+      
+      if (error.message.includes('quotaExceeded')) {
+        throw new Error('YouTube API quota exceeded. Please try again later.');
+      }
+      
+      if (error.message.includes('playlistNotFound')) {
+        throw new Error('Playlist not found or is private');
+      }
+      
       throw new Error(`Failed to fetch YouTube playlist: ${error.message}`);
     }
   }
@@ -147,7 +185,12 @@ class YouTubeService {
     try {
       Logger.info(`Getting video info for: ${url}`);
       
-      const info = await ytdl.getInfo(url);
+      // Add delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
+      
+      const info = await ytdl.getInfo(url, {
+        requestOptions: this.ytdlOptions.requestOptions
+      });
       
       if (!info) {
         throw new Error('Could not get video details');
@@ -160,7 +203,7 @@ class YouTubeService {
         duration: parseInt(info.videoDetails.lengthSeconds) || 0,
         thumbnail: info.videoDetails.thumbnails?.[0]?.url,
         url: url,
-        author: info.videoDetails.author?.name || info.videoDetails.ownerChannelName
+        author: info.videoDetails.author?.name
       };
     } catch (error) {
       Logger.error('Failed to get video info:', error.message);
@@ -175,28 +218,43 @@ class YouTubeService {
       // Add delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, Math.random() * 2000 + 1000));
 
-      const stream = ytdl(url, {
-        filter: 'audioonly',
-        quality: 'highestaudio',
-        highWaterMark: 1 << 25,
-        requestOptions: {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-          }
-        }
-      });
-      
-      if (!stream) {
-        throw new Error('Failed to create audio stream');
+      // Validate URL first
+      if (!ytdl.validateURL(url)) {
+        throw new Error('Invalid YouTube URL');
       }
 
-      Logger.info('Successfully created audio stream with latest ytdl-core');
+      // Get video info to check availability
+      const info = await ytdl.getInfo(url, {
+        requestOptions: this.ytdlOptions.requestOptions
+      });
+
+      if (!info.videoDetails.isLiveContent && info.videoDetails.isPrivate) {
+        throw new Error('This video is private');
+      }
+
+      if (info.videoDetails.isLiveContent) {
+        throw new Error('Live streams are not supported');
+      }
+
+      // Create audio stream with enhanced options
+      const stream = ytdl(url, {
+        ...this.ytdlOptions,
+        begin: 0,
+        liveBuffer: 1000,
+        dlChunkSize: 0,
+        bitrate: 128
+      });
+
+      // Handle stream errors
+      stream.on('error', (error) => {
+        Logger.error('ytdl stream error:', error.message);
+      });
+
+      stream.on('info', (info) => {
+        Logger.info(`Stream info: ${info.videoDetails.title}`);
+      });
+
+      Logger.info('Successfully created audio stream via ytdl-core');
       return stream;
     } catch (error) {
       Logger.error('Failed to create audio stream:', error.message);
@@ -212,6 +270,14 @@ class YouTubeService {
           error.message.includes('private') ||
           error.message.includes('deleted')) {
         throw new Error('This video is unavailable, private, or has been deleted.');
+      }
+
+      if (error.message.includes('age-restricted')) {
+        throw new Error('This video is age-restricted and cannot be played.');
+      }
+
+      if (error.message.includes('Live streams')) {
+        throw new Error('Live streams are not supported.');
       }
       
       throw new Error(`Failed to create audio stream: ${error.message}`);
