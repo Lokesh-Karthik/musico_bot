@@ -31,6 +31,10 @@ class YouTubeService {
 
   isYouTubeVideoUrl(url) {
     try {
+      // Try play-dl first, then ytdl-core
+      if (play.yt_validate && play.yt_validate(url) === 'video') {
+        return true;
+      }
       return ytdl.validateURL(url);
     } catch (error) {
       return false;
@@ -39,9 +43,12 @@ class YouTubeService {
 
   extractVideoId(url) {
     try {
+      // Try ytdl first
       return ytdl.getVideoID(url);
     } catch (error) {
-      return null;
+      // Fallback to manual extraction
+      const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/);
+      return match ? match[1] : null;
     }
   }
 
@@ -52,7 +59,7 @@ class YouTubeService {
 
   async validateVideo(url) {
     try {
-      return ytdl.validateURL(url);
+      return ytdl.validateURL(url) || play.yt_validate(url) === 'video';
     } catch (error) {
       return false;
     }
@@ -152,7 +159,6 @@ class YouTubeService {
   async getVideoInfo(url) {
     try {
       Logger.info(`Getting video info for: ${url}`);
-      
       if (!ytdl.validateURL(url)) {
         throw new Error('Invalid YouTube URL');
       }

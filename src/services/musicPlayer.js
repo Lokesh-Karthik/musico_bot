@@ -167,6 +167,7 @@ export class MusicPlayer {
       const resource = createAudioResource(stream, {
         inputType: StreamType.Arbitrary,
         inlineVolume: true,
+        silencePaddingFrames: 5,
         metadata: {
           title: track.title,
           url: audioUrl
@@ -178,7 +179,23 @@ export class MusicPlayer {
       Logger.info(`Now playing: ${track.title} (Guild: ${guildId})`);
     } catch (error) {
       Logger.error(`Failed to play track: ${track.title}`, error.message);
-      Logger.info('Attempting to play next track...');
+      
+      // Handle different types of errors
+      if (error.message.includes('YouTube is temporarily blocking') || 
+          error.message.includes('YouTube is blocking') ||
+          error.message.includes('Sign in to confirm') ||
+          error.message.includes('blocked') ||
+          error.message.includes('parsing watch.html') ||
+          error.message.includes('unavailable')) {
+        Logger.warn(`YouTube blocking detected: ${error.message}. Waiting 60 seconds before trying next track...`);
+        setTimeout(() => {
+          this.isPlaying.set(guildId, false);
+          this.playNext(guildId);
+        }, 60000); // Increased to 60 seconds
+        return;
+      }
+      
+      Logger.info('Non-blocking error, attempting to play next track immediately...');
       this.isPlaying.set(guildId, false);
       return this.playNext(guildId);
     }
