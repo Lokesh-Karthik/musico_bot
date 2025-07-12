@@ -1,16 +1,13 @@
-import ytdl from '@distube/ytdl-core';
+import { YtDlp } from 'node-yt-dlp';
 import { google } from 'googleapis';
 import { config } from '../config.js';
 import { Logger } from '../utils/logger.js';
 
 class YouTubeService {
   constructor() {
-    this.streamOptions = {
-      filter: 'audioonly',
-      quality: 'highestaudio',
-      highWaterMark: 1 << 25
-    };
-
+    // Initialize yt-dlp
+    this.ytdlp = new YtDlp();
+    
     // Initialize YouTube API if key is provided
     if (config.youtube.apiKey) {
       this.youtube = google.youtube({
@@ -23,6 +20,8 @@ class YouTubeService {
       this.apiEnabled = false;
       Logger.warn('YouTube API key not provided. Search and playlist features disabled.');
     }
+
+    Logger.info('YouTube service initialized with yt-dlp');
   }
 
   isYouTubePlaylistUrl(url) {
@@ -30,26 +29,16 @@ class YouTubeService {
   }
 
   isYouTubeVideoUrl(url) {
-    try {
-      // Try play-dl first, then ytdl-core
-      if (play.yt_validate && play.yt_validate(url) === 'video') {
-        return true;
-      }
-      return ytdl.validateURL(url);
-    } catch (error) {
-      return false;
-    }
+    const patterns = [
+      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)/,
+      /music\.youtube\.com\/watch\?v=/
+    ];
+    return patterns.some(pattern => pattern.test(url));
   }
 
   extractVideoId(url) {
-    try {
-      // Try ytdl first
-      return ytdl.getVideoID(url);
-    } catch (error) {
-      // Fallback to manual extraction
-      const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/);
-      return match ? match[1] : null;
-    }
+    const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/);
+    return match ? match[1] : null;
   }
 
   extractPlaylistId(url) {
@@ -59,7 +48,8 @@ class YouTubeService {
 
   async validateVideo(url) {
     try {
-      return ytdl.validateURL(url) || play.yt_validate(url) === 'video';
+      const info = await this.ytdlp.getVideoInfo(url);
+      return !!info;
     } catch (error) {
       return false;
     }
@@ -159,52 +149,32 @@ class YouTubeService {
   async getVideoInfo(url) {
     try {
       Logger.info(`Getting video info for: ${url}`);
-      if (!ytdl.validateURL(url)) {
-        throw new Error('Invalid YouTube URL');
-      }
-
-      // Add retry logic for extraction issues
-      let attempts = 0;
-      const maxAttempts = 3;
       
-      while (attempts < maxAttempts) {
-        try {
-          const info = await ytdl.getInfo(url, {
-            requestOptions: {
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-              }
-            }
-          });
-          
-          if (!info || !info.videoDetails) {
-            throw new Error('Could not get video details');
-          }
-
-          Logger.info(`Successfully got info for: ${info.videoDetails.title}`);
-          
-          return {
-            title: info.videoDetails.title,
-            duration: parseInt(info.videoDetails.lengthSeconds) || 0,
-            thumbnail: info.videoDetails.thumbnails?.[0]?.url,
-            url: url,
-            author: info.videoDetails.author?.name
-          };
-        } catch (error) {
-          attempts++;
-          Logger.warn(`Attempt ${attempts} failed: ${error.message}`);
-          
-          if (attempts >= maxAttempts) {
-            throw error;
-          }
-          
-          // Wait before retry
-          await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
-        }
+      const info = await this.ytdlp.getVideoInfo(url, {
+        dumpSingleJson: true,
+        noWarnings: true,
+        noCallHome: true,
+        noCheckCertificate: true,
+        preferFreeFormats: true,
+        youtubeSkipDashManifest: true
+      });
+      
+      if (!info) {
+        throw new Error('Could not get video details');
       }
+
+      Logger.info(`Successfully got info via yt-dlp: ${info.title}`);
+      
+      return {
+        title: info.title,
+        duration: info.duration || 0,
+        thumbnail: info.thumbnail,
+        url: url,
+        author: info.uploader || info.channel
+      };
     } catch (error) {
       Logger.error('Failed to get video info:', error.message);
-      throw new Error(`Failed to get video information. This might be due to YouTube restrictions or the video being unavailable.`);
+      throw new Error(`Failed to get video information: ${error.message}`);
     }
   }
 
@@ -212,25 +182,46 @@ class YouTubeService {
     try {
       Logger.info(`Creating audio stream for: ${url}`);
       
-      if (!ytdl.validateURL(url)) {
-        throw new Error('Invalid YouTube URL');
+      // Add delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 2000 + 1000));
+
+      const stream = await this.ytdlp.exec(url, {
+        format: 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio',
+        output: '-',
+        quiet: true,
+        noWarnings: true,
+        extractFlat: false,
+        audioFormat: 'best',
+        audioQuality: 0,
+        preferFreeFormats: true,
+        youtubeSkipDashManifest: true,
+        addHeader: [
+          'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ]
+      });
+      
+      if (!stream) {
+        throw new Error('Failed to create audio stream');
       }
 
-      const stream = ytdl(url, {
-        filter: 'audioonly',
-        quality: 'highestaudio',
-        highWaterMark: 1 << 25,
-        requestOptions: {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-          }
-        }
-      });
-
-      Logger.info('Successfully created audio stream');
+      Logger.info('Successfully created audio stream via yt-dlp');
       return stream;
     } catch (error) {
       Logger.error('Failed to create audio stream:', error.message);
+      
+      // Provide specific error messages
+      if (error.message.includes('Sign in to confirm') || 
+          error.message.includes('bot') ||
+          error.message.includes('blocked')) {
+        throw new Error('YouTube is blocking requests. Waiting before trying next song...');
+      }
+      
+      if (error.message.includes('Video unavailable') || 
+          error.message.includes('private') ||
+          error.message.includes('deleted')) {
+        throw new Error('This video is unavailable, private, or has been deleted.');
+      }
+      
       throw new Error(`Failed to create audio stream: ${error.message}`);
     }
   }
