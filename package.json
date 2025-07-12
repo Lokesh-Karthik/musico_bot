@@ -23,10 +23,6 @@
     "node": "18.x"
   },
   "dependencies": {
-    "@discordjs/builders": "^1.11.2",
-    "@discordjs/voice": "^0.18.0",
-    "ytdl-core": "^4.11.5",
-    "play-dl": "^1.9.7",
     "discord.js": "^14.21.0",
     "dotenv": "^17.2.0",
     "ffmpeg-static": "^5.2.0",

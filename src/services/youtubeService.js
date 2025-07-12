@@ -1,27 +1,54 @@
-import { YtDlp } from 'node-yt-dlp';
-import { google } from 'googleapis';
+import { spawn } from 'child_process';
 import { config } from '../config.js';
 import { Logger } from '../utils/logger.js';
 
 class YouTubeService {
   constructor() {
-    // Initialize yt-dlp
-    this.ytdlp = new YtDlp();
-    
-    // Initialize YouTube API if key is provided
-    if (config.youtube.apiKey) {
-      this.youtube = google.youtube({
-        version: 'v3',
-        auth: config.youtube.apiKey
-      });
-      this.apiEnabled = true;
-      Logger.info('YouTube Data API initialized');
-    } else {
-      this.apiEnabled = false;
-      Logger.warn('YouTube API key not provided. Search and playlist features disabled.');
-    }
+    this.ensureYtDlp();
+    Logger.info('YouTube service initialized with yt-dlp binary');
+  }
 
-    Logger.info('YouTube service initialized with yt-dlp');
+  async ensureYtDlp() {
+    try {
+      // Check if yt-dlp is available
+      const { stdout } = await this.execCommand('yt-dlp', ['--version']);
+      Logger.info(`yt-dlp version: ${stdout.trim()}`);
+    } catch (error) {
+      Logger.error('yt-dlp not found. Please install it: https://github.com/yt-dlp/yt-dlp#installation');
+      throw new Error('yt-dlp binary not found. Please install yt-dlp.');
+    }
+  }
+
+  execCommand(command, args = [], options = {}) {
+    return new Promise((resolve, reject) => {
+      const process = spawn(command, args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        ...options
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      process.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      process.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      process.on('close', (code) => {
+        if (code === 0) {
+          resolve({ stdout, stderr });
+        } else {
+          reject(new Error(`Command failed with code ${code}: ${stderr || stdout}`));
+        }
+      });
+
+      process.on('error', (error) => {
+        reject(error);
+      });
+    });
   }
 
   isYouTubePlaylistUrl(url) {
@@ -48,36 +75,41 @@ class YouTubeService {
 
   async validateVideo(url) {
     try {
-      const info = await this.ytdlp.getVideoInfo(url);
-      return !!info;
+      await this.execCommand('yt-dlp', ['--simulate', '--quiet', url]);
+      return true;
     } catch (error) {
       return false;
     }
   }
 
   async searchVideos(query, maxResults = 5) {
-    if (!this.apiEnabled) {
-      throw new Error('YouTube API key not configured. Please add YOUTUBE_API_KEY to your .env file.');
-    }
-
     try {
       Logger.info(`Searching YouTube for: ${query}`);
       
-      const response = await this.youtube.search.list({
-        part: 'snippet',
-        q: query,
-        type: 'video',
-        maxResults: maxResults,
-        order: 'relevance'
-      });
+      const { stdout } = await this.execCommand('yt-dlp', [
+        '--dump-json',
+        '--flat-playlist',
+        '--quiet',
+        `ytsearch${maxResults}:${query}`
+      ]);
 
-      const videos = response.data.items.map(item => ({
-        title: item.snippet.title,
-        url: `https://www.youtube.com/watch?v=${item.id.videoId}`,
-        thumbnail: item.snippet.thumbnails?.default?.url,
-        author: item.snippet.channelTitle,
-        description: item.snippet.description
-      }));
+      const videos = stdout.trim().split('\n')
+        .filter(line => line.trim())
+        .map(line => {
+          try {
+            const data = JSON.parse(line);
+            return {
+              title: data.title,
+              url: `https://www.youtube.com/watch?v=${data.id}`,
+              thumbnail: data.thumbnail,
+              author: data.uploader || data.channel,
+              description: data.description || ''
+            };
+          } catch (e) {
+            return null;
+          }
+        })
+        .filter(video => video !== null);
 
       Logger.info(`Found ${videos.length} videos for query: ${query}`);
       return videos;
@@ -88,56 +120,41 @@ class YouTubeService {
   }
 
   async getPlaylistVideos(playlistId) {
-    if (!this.apiEnabled) {
-      throw new Error('YouTube API key not configured. Please add YOUTUBE_API_KEY to your .env file.');
-    }
-
     try {
       Logger.info(`Fetching YouTube playlist: ${playlistId}`);
       
-      // Get playlist info
-      const playlistResponse = await this.youtube.playlists.list({
-        part: 'snippet',
-        id: playlistId
-      });
+      const playlistUrl = `https://www.youtube.com/playlist?list=${playlistId}`;
+      
+      const { stdout } = await this.execCommand('yt-dlp', [
+        '--dump-json',
+        '--flat-playlist',
+        '--quiet',
+        playlistUrl
+      ]);
 
-      if (!playlistResponse.data.items.length) {
-        throw new Error('Playlist not found or is private');
-      }
+      const videos = stdout.trim().split('\n')
+        .filter(line => line.trim())
+        .map(line => {
+          try {
+            const data = JSON.parse(line);
+            return {
+              title: data.title,
+              url: `https://www.youtube.com/watch?v=${data.id}`,
+              thumbnail: data.thumbnail,
+              author: data.uploader || data.channel,
+              description: data.description || ''
+            };
+          } catch (e) {
+            return null;
+          }
+        })
+        .filter(video => video !== null);
 
-      const playlistInfo = playlistResponse.data.items[0];
-      const videos = [];
-      let nextPageToken = null;
-
-      do {
-        const response = await this.youtube.playlistItems.list({
-          part: 'snippet',
-          playlistId: playlistId,
-          maxResults: 50,
-          pageToken: nextPageToken
-        });
-
-        const items = response.data.items.filter(item => 
-          item.snippet.title !== 'Private video' && 
-          item.snippet.title !== 'Deleted video'
-        );
-
-        videos.push(...items.map(item => ({
-          title: item.snippet.title,
-          url: `https://www.youtube.com/watch?v=${item.snippet.resourceId.videoId}`,
-          thumbnail: item.snippet.thumbnails?.default?.url,
-          author: item.snippet.videoOwnerChannelTitle || item.snippet.channelTitle,
-          description: item.snippet.description
-        })));
-
-        nextPageToken = response.data.nextPageToken;
-      } while (nextPageToken);
-
-      Logger.info(`Found ${videos.length} videos in playlist: ${playlistInfo.snippet.title}`);
+      Logger.info(`Found ${videos.length} videos in playlist`);
       
       return {
-        name: playlistInfo.snippet.title,
-        description: playlistInfo.snippet.description,
+        name: `YouTube Playlist (${videos.length} videos)`,
+        description: 'YouTube playlist',
         videos: videos
       };
     } catch (error) {
@@ -150,20 +167,19 @@ class YouTubeService {
     try {
       Logger.info(`Getting video info for: ${url}`);
       
-      const info = await this.ytdlp.getVideoInfo(url, {
-        dumpSingleJson: true,
-        noWarnings: true,
-        noCallHome: true,
-        noCheckCertificate: true,
-        preferFreeFormats: true,
-        youtubeSkipDashManifest: true
-      });
+      const { stdout } = await this.execCommand('yt-dlp', [
+        '--dump-json',
+        '--quiet',
+        url
+      ]);
+      
+      const info = JSON.parse(stdout.trim());
       
       if (!info) {
         throw new Error('Could not get video details');
       }
 
-      Logger.info(`Successfully got info via yt-dlp: ${info.title}`);
+      Logger.info(`Successfully got info: ${info.title}`);
       
       return {
         title: info.title,
@@ -185,27 +201,46 @@ class YouTubeService {
       // Add delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, Math.random() * 2000 + 1000));
 
-      const stream = await this.ytdlp.exec(url, {
-        format: 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio',
-        output: '-',
-        quiet: true,
-        noWarnings: true,
-        extractFlat: false,
-        audioFormat: 'best',
-        audioQuality: 0,
-        preferFreeFormats: true,
-        youtubeSkipDashManifest: true,
-        addHeader: [
-          'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        ]
+      const args = [
+        '--format', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio',
+        '--output', '-',
+        '--quiet',
+        '--no-warnings',
+        '--extract-flat', 'false',
+        '--audio-format', 'best',
+        '--audio-quality', '0',
+        '--prefer-free-formats',
+        '--youtube-skip-dash-manifest',
+        '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        url
+      ];
+
+      const process = spawn('yt-dlp', args, {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      let errorOutput = '';
+      process.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+      });
+
+      process.on('error', (error) => {
+        Logger.error('yt-dlp process error:', error.message);
+        throw new Error(`Failed to start yt-dlp: ${error.message}`);
+      });
+
+      process.on('close', (code) => {
+        if (code !== 0) {
+          Logger.error('yt-dlp failed:', errorOutput);
+        }
       });
       
-      if (!stream) {
+      if (!process.stdout) {
         throw new Error('Failed to create audio stream');
       }
 
       Logger.info('Successfully created audio stream via yt-dlp');
-      return stream;
+      return process.stdout;
     } catch (error) {
       Logger.error('Failed to create audio stream:', error.message);
       
