@@ -1,5 +1,5 @@
 # Discord Music Bot
-# musico
+# musicobot
 
 A feature-rich Discord music bot that can play songs from YouTube Music and Spotify playlists. Simply paste a playlist link and the bot will play all songs from that playlist!
 
