@@ -23,12 +23,17 @@
     "node": "18.x"
   },
   "dependencies": {
+    "@discordjs/builders": "^1.11.2",
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "^0.18.0",
+    "@distube/ytdl-core": "^4.16.12",
     "discord.js": "^14.21.0",
     "dotenv": "^17.2.0",
     "ffmpeg-static": "^5.2.0",
     "googleapis": "^152.0.0",
+    "libsodium-wrappers": "^0.7.15",
     "node-fetch": "^3.3.2",
-    "opusscript": "^0.0.8",
+    "opusscript": "^0.1.1",
     "spotify-web-api-node": "^5.0.2"
   }
 }
