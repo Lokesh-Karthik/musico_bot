@@ -19,6 +19,9 @@
   ],
   "author": "Your Name",
   "license": "MIT",
+  "engines": {
+    "node": "18.x"
+  },
   "dependencies": {
     "@discordjs/builders": "^1.11.2",
     "@discordjs/opus": "^0.10.0",
