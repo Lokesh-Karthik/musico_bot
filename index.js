@@ -1,6 +1,7 @@
 import ffmpeg from 'ffmpeg-static';
 import { DiscordMusicBot } from './src/bot.js';
 import { Logger } from './src/utils/logger.js';
+const keep_alive = require('./keep_alive.js')
 
 async function main() {
   try {
