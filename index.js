@@ -1,7 +1,10 @@
 import ffmpeg from 'ffmpeg-static';
 import { DiscordMusicBot } from './src/bot.js';
 import { Logger } from './src/utils/logger.js';
-import { keep_alive } from './keep_alive.js';
+import http from 'http';
+
+// For standard Node.js http/https modules
+const httpAgent = new http.Agent({ keepAlive: true });
 
 async function main() {
   try {
