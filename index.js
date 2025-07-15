@@ -1,11 +1,7 @@
 import ffmpeg from 'ffmpeg-static';
 import { DiscordMusicBot } from './src/bot.js';
 import { Logger } from './src/utils/logger.js';
-import http from 'http';
 
-// For standard Node.js http/https modules
-//const httpAgent = new http.Agent({ keepAlive: true });
-const port = process.env.PORT || 3000
 async function main() {
   try {
     // Set FFmpeg path for @discordjs/voice
