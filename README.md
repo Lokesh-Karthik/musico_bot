@@ -1,7 +1,6 @@
 # Discord Music Bot
-# musicobot
 
-A feature-rich Discord music bot that can play songs from YouTube Music and Spotify playlists. Simply paste a playlist link and the bot will play all songs from that playlist!
+A feature-rich Discord music bot written in Python that can play songs from YouTube Music and Spotify playlists. Simply paste a playlist link and the bot will play all songs from that playlist!
 
 ## Features
 
@@ -17,9 +16,11 @@ A feature-rich Discord music bot that can play songs from YouTube Music and Spot
 
 ### 1. Prerequisites
 
-- Node.js 18 or higher
+- Python 3.8 or higher
+- FFmpeg installed on your system
 - A Discord application and bot token
 - (Optional) Spotify Client ID and Secret for Spotify playlist support
+- (Optional) YouTube Data API key for enhanced search and playlist features
 
 ### 2. Discord Bot Setup
 
@@ -42,22 +43,29 @@ A feature-rich Discord music bot that can play songs from YouTube Music and Spot
 ### 4. Installation
 
 1. Clone or download this project
-2. Install dependencies:
+2. Create a virtual environment (recommended):
    ```bash
-   npm install
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-3. Copy `.env.example` to `.env`:
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Copy `.env.example` to `.env`:
    ```bash
    cp .env.example .env
    ```
 
-4. Fill in your configuration in `.env`:
+5. Fill in your configuration in `.env`:
    ```env
    DISCORD_TOKEN=your_discord_bot_token_here
    CLIENT_ID=your_discord_application_id_here
    SPOTIFY_CLIENT_ID=your_spotify_client_id_here
    SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
+   YOUTUBE_API_KEY=your_youtube_api_key_here
    PREFIX=!
    ```
 
@@ -71,12 +79,26 @@ https://discord.com/api/oauth2/authorize?client_id=CLIENT_ID&permissions=3148800
 ### 6. Run the Bot
 
 ```bash
-npm start
+python main.py
 ```
 
-For development with auto-restart:
+### 7. FFmpeg Installation
+
+The bot requires FFmpeg to play audio. Install it based on your operating system:
+
+**Windows:**
+- Download from [FFmpeg official website](https://ffmpeg.org/download.html)
+- Add to your system PATH
+
+**macOS:**
 ```bash
-npm run dev
+brew install ffmpeg
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install ffmpeg
 ```
 
 ## Commands
@@ -101,10 +123,11 @@ npm run dev
 
 ## Notes
 
-- YouTube playlist support requires YouTube Data API integration (not included in this basic version)
+- YouTube playlist support requires YouTube Data API key
 - The bot requires voice channel permissions to join and play music
 - Spotify playlist support requires Spotify API credentials
 - For production use, consider implementing additional error handling and rate limiting
+- The bot uses yt-dlp for YouTube audio extraction
 
 ## Troubleshooting
 
@@ -116,12 +139,23 @@ npm run dev
 ### Audio not playing
 - Ensure the bot has "Connect" and "Speak" permissions in voice channels
 - Check if you're in a voice channel when using commands
+- Make sure FFmpeg is properly installed and accessible
 - Verify your internet connection and try again
 
 ### Spotify playlists not working
 - Make sure you've set up Spotify API credentials
 - Check if the playlist URL is public and accessible
 - Verify your Spotify Client ID and Secret are correct
+
+### YouTube features not working
+- Make sure you have a valid YouTube Data API key
+- Check if the API key has the YouTube Data API v3 enabled
+- Verify your API quota hasn't been exceeded
+
+### FFmpeg errors
+- Ensure FFmpeg is installed and in your system PATH
+- Try reinstalling FFmpeg if you encounter codec errors
+- Check that you have the latest version of FFmpeg
 
 ## License
 
